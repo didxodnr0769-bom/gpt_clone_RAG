@@ -194,7 +194,7 @@ class RAGSystem:
             logger.error(f"벡터 스토어 저장 실패: {e}")
             raise
     
-    def add_document(self, file_path: str, chunking_method: str = "auto", chunk_size: int = 500, chunk_overlap: int = 100, replace_existing: bool = True) -> Dict[str, Any]:
+    def add_document(self, file_path: str, chunking_method: str = "recursive", chunk_size: int = 100, chunk_overlap: int = 10, replace_existing: bool = True) -> Dict[str, Any]:
         """
         문서를 벡터 DB에 추가하고 인덱싱
         
@@ -374,8 +374,38 @@ class RAGSystem:
             
             logger.info(f"스트림 질문 처리 시작: {question}")
             
-            # 관련 문서 검색
-            relevant_docs = self.vector_store.similarity_search(question, k=3)
+            # 관련 문서 검색 (검색 개수 증가)
+            relevant_docs = self.vector_store.similarity_search(question, k=10)
+            
+            # 조 번호가 포함된 질문의 경우 키워드 검색도 추가
+            import re
+            article_pattern = r'제\s*\d+\s*조'
+            if re.search(article_pattern, question):
+                logger.info(f"조 번호 감지, 키워드 검색 추가: {question}")
+                # 모든 문서에서 해당 조 번호 검색
+                all_docs = self.vector_store.similarity_search("", k=10000)
+                keyword_docs = []
+                for doc in all_docs:
+                    if re.search(article_pattern, doc.page_content):
+                        # 질문의 조 번호와 매칭되는 문서 찾기
+                        question_articles = re.findall(article_pattern, question)
+                        doc_articles = re.findall(article_pattern, doc.page_content)
+                        if any(article in doc_articles for article in question_articles):
+                            keyword_docs.append(doc)
+                
+                # 키워드 검색 결과를 기존 결과와 결합
+                if keyword_docs:
+                    relevant_docs = keyword_docs + relevant_docs
+                    # 중복 제거
+                    seen = set()
+                    unique_docs = []
+                    for doc in relevant_docs:
+                        doc_id = id(doc)
+                        if doc_id not in seen:
+                            seen.add(doc_id)
+                            unique_docs.append(doc)
+                    relevant_docs = unique_docs[:10]  # 상위 10개로 제한
+            
             if not relevant_docs:
                 yield {
                     "chunk": "관련 문서를 찾을 수 없습니다.",
